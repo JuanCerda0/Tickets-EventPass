@@ -29,7 +29,7 @@ public class TicketController {
 
     @GetMapping("/mis-tickets")
     public ResponseEntity<List<TicketResponse>> listarMisTickets(
-        @RequestParam @Positive Long usuarioId,
+        @RequestParam("usuarioId") @Positive Long usuarioId,
         @AuthenticationPrincipal UsuarioAutenticado usuario
     ) {
         return ResponseEntity.ok(ticketService.listarMisTickets(usuarioId, usuario));
