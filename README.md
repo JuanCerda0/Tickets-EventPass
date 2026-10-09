@@ -1,51 +1,48 @@
-# Tickets EventPass
+# Microservicio Tickets EventPass
 
-Microservicio de Tickets para el contrato local de EventPass. Emite tickets para órdenes con aforo reservado, permite que un comprador consulte sus propios tickets y permite que STAFF valide cada código una sola vez. La comunicación local se realiza por HTTP/JSON; este servicio no implementa componentes AWS.
+Tickets administra los códigos de acceso emitidos para las compras de EventPass. Recibe una solicitud de emisión de Orders después de que Events confirma la reserva, permite que cada comprador consulte sus propios tickets y permite que STAFF valide cada código una sola vez.
 
-## Requisitos y configuración
+Este repositorio contiene únicamente el microservicio Tickets. Se comunica por HTTP/REST y JSON, mantiene su propia base de datos PostgreSQL y no consulta las bases de datos de Users, Events u Orders. La implementación descrita corresponde al flujo local acordado; API Gateway, SQS, Lambda y otros componentes AWS quedan fuera de este alcance.
 
-- Java 21
-- PostgreSQL
-- Microservicio Users disponible para registrar/iniciar sesión y emitir JWT
+## Qué hace
 
-Crea la base de datos `eventpass_tickets` en PostgreSQL. Copia `.env.example` como `.env` y configura la conexión. `JWT_SECRET_BASE64` debe tener exactamente el mismo valor que el de Users; `JWT_ISSUER` debe ser `eventpass-users`. El archivo `.env` es local y no se versiona.
+- Emite un ticket por cada unidad solicitada por Orders tras una reserva confirmada.
+- Genera códigos aleatorios con prefijo `EVP-` y restricción de unicidad en la base de datos.
+- Devuelve los tickets existentes si Orders repite una emisión con los mismos datos para una orden.
+- Permite que un comprador consulte sus propios tickets, usando el JWT emitido por Users.
+- Permite que STAFF valide un código y marca el ticket como `UTILIZADO`.
+- Impide que un ticket utilizado se valide correctamente otra vez.
+- Guarda `ordenId`, `usuarioId` y `eventoId` como identificadores externos, sin relaciones JPA entre microservicios.
 
-La aplicación escucha en el puerto `8081` por defecto. Para iniciarla desde CMD en la raíz del repositorio:
+El servicio no administra eventos, órdenes, reservas ni cuentas. No contempla reembolsos ni cancelaciones de tickets; por eso no expone una operación de eliminación. Los estados implementados son `EMITIDO` y `UTILIZADO`.
 
-```cmd
-mvnw.cmd spring-boot:run
-```
+## Especificaciones técnicas
 
-Variables de entorno disponibles en `.env`:
-
-| Variable | Valor predeterminado / uso |
+| Componente | Especificación |
 |---|---|
-| `SERVER_PORT` | `8081` |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/eventpass_tickets` |
-| `DB_USERNAME` | `postgres` |
-| `DB_PASSWORD` | Vacío |
-| `JWT_SECRET_BASE64` | Obligatoria; debe coincidir con Users |
-| `JWT_ISSUER` | `eventpass-users` |
+| Java | 21 |
+| Spring Boot | 4.1.1 |
+| Construcción | Maven Wrapper |
+| Aplicación | Spring Web MVC, Spring Security, Spring Data JPA y Bean Validation |
+| Base de datos | PostgreSQL |
+| Tokens | JWT HMAC compartido con Users, usando JJWT 0.13.0 |
+| Puerto local | 8081 (configurable con `SERVER_PORT`) |
 
-Hibernate actualiza el esquema local con `ddl-auto=update`. Tickets administra su propia tabla y guarda los identificadores externos `ordenId`, `usuarioId` y `eventoId` como valores; no consulta las bases de datos de los otros servicios.
+Tickets valida la firma HMAC, el emisor `eventpass-users` y la expiración del JWT. El token debe incluir el id del usuario en `sub`, junto con los claims `email` y `rol`, siguiendo el formato que emite Users.
 
-## Autenticación y autorización
+## Endpoints
 
-Las rutas usan el JWT Bearer emitido por Users. Tickets valida firma HMAC, emisor y expiración con la clave compartida. El token debe incluir `sub`, `email` y `rol`, siguiendo el formato de Users.
+Todas las rutas están bajo `http://localhost:8081` durante el desarrollo local.
 
-| Operación | Rol requerido |
-|---|---|
-| Emitir tickets para una orden | `COMPRADOR` |
-| Consultar mis tickets | `COMPRADOR` |
-| Validar un código | `STAFF` |
-
-Para la emisión, Orders debe reenviar el JWT del comprador en `Authorization: Bearer <token>`. Esta modalidad autentica al comprador y evita añadir otra credencial entre servicios. Como Tickets no recibe una identidad propia de Orders, un titular de un JWT `COMPRADOR` válido también puede invocar directamente la ruta interna si conoce los datos de la orden.
-
-## Endpoints del contrato
+| Método | Ruta | Autenticación | Descripción |
+|---|---|---|---|
+| `POST` | `/interno/tickets` | Bearer JWT de `COMPRADOR` | Emite tickets para una orden cuya reserva ya confirmó Events. Orders debe reenviar el JWT del comprador. |
+| `GET` | `/tickets/mis-tickets?usuarioId={usuarioId}` | Bearer JWT de `COMPRADOR` | Lista los tickets del usuario autenticado. El parámetro debe coincidir con `sub`. |
+| `POST` | `/tickets/{codigo}/validaciones` | Bearer JWT de `STAFF` | Marca como utilizado un código emitido. No requiere cuerpo. |
 
 ### Emitir tickets
 
-`POST http://localhost:8081/interno/tickets`
+`POST /interno/tickets`
 
 Headers: `Authorization: Bearer <JWT del comprador>` y `Content-Type: application/json`.
 
@@ -66,24 +63,24 @@ Primera emisión: `201 Created`.
 {
   "ordenId": 901,
   "tickets": [
-    {"ticketId": 1, "codigo": "EVP-7KQ4XH9M2W3A"},
-    {"ticketId": 2, "codigo": "EVP-8N5T3Y6P4Z2B"}
+    {"ticketId": 3001, "codigo": "EVP-7KQ4XH9M2W3A"},
+    {"ticketId": 3002, "codigo": "EVP-8N5T3Y6P4Z2B"}
   ]
 }
 ```
 
-Los códigos se generan aleatoriamente con prefijo `EVP-`; la base de datos impone su unicidad. Si se reintenta la misma orden con usuario, evento y cantidad iguales, devuelve los tickets existentes con `200 OK`. Si esos datos no coinciden, responde `409 Conflict`. `usuarioId` debe coincidir con el `sub` del JWT.
+Cada identificador debe ser positivo y `cantidad` mayor que cero. El `usuarioId` debe coincidir con el `sub` del JWT. Si se repite la solicitud después de una emisión completada y coinciden `ordenId`, `usuarioId`, `eventoId` y `cantidad`, Tickets responde `200 OK` con los mismos códigos. Si una orden existente recibe datos distintos, responde `409 Conflict`.
 
-### Consultar tickets propios
+### Consultar tickets del comprador
 
-`GET http://localhost:8081/tickets/mis-tickets?usuarioId=12`
+`GET /tickets/mis-tickets?usuarioId=12`
 
-Requiere JWT de `COMPRADOR` y que `usuarioId` coincida con el `sub`. Responde `200 OK` con una lista; si no existen tickets, devuelve `[]`.
+Requiere JWT de `COMPRADOR`; `usuarioId` debe coincidir con el `sub`. Responde `200 OK` con los tickets del comprador ordenados del más reciente al más antiguo. Si no tiene tickets, devuelve una lista vacía `[]`.
 
 ```json
 [
   {
-    "ticketId": 1,
+    "ticketId": 3001,
     "codigo": "EVP-7KQ4XH9M2W3A",
     "ordenId": 901,
     "eventoId": 45,
@@ -92,11 +89,13 @@ Requiere JWT de `COMPRADOR` y que `usuarioId` coincida con el `sub`. Responde `2
 ]
 ```
 
-### Validar un código
+Si el `usuarioId` no coincide con el usuario autenticado, responde `403 Forbidden`.
 
-`POST http://localhost:8081/tickets/EVP-7KQ4XH9M2W3A/validaciones`
+### Validar un ticket
 
-Requiere JWT de `STAFF`. No necesita cuerpo.
+`POST /tickets/EVP-7KQ4XH9M2W3A/validaciones`
+
+Requiere JWT de `STAFF`. La primera validación correcta bloquea el registro durante la transición de estado para evitar aceptar dos validaciones simultáneas del mismo ticket.
 
 Primera validación: `200 OK`.
 
@@ -108,7 +107,7 @@ Primera validación: `200 OK`.
 }
 ```
 
-Si ya fue utilizado: `409 Conflict`.
+Si el código ya fue utilizado, responde `409 Conflict`.
 
 ```json
 {
@@ -119,16 +118,158 @@ Si ya fue utilizado: `409 Conflict`.
 }
 ```
 
-Un código inexistente responde `404 Not Found`. Un JWT ausente o inválido responde `401 Unauthorized`; un rol incorrecto responde `403 Forbidden`.
+Un código inexistente responde `404 Not Found`.
 
-## Prueba manual con Postman
+### Respuestas de error
 
-1. Inicia Users y Tickets, y crea o inicia sesión con un comprador para obtener su JWT.
-2. Envía `POST /interno/tickets` con el token del comprador y una cantidad mayor que cero.
-3. Repite la misma solicitud y confirma que conserva los códigos y devuelve `200`.
-4. Cambia la cantidad o el evento para esa misma orden y confirma `409`.
-5. Consulta `GET /tickets/mis-tickets?usuarioId={sub}` y comprueba que aparecen esos tickets. Prueba también un `usuarioId` diferente y espera `403`.
-6. Inicia sesión con un usuario STAFF y valida un código. Repite la validación y confirma `409`.
-7. Comprueba que una petición sin token responde `401` y que el rol equivocado responde `403`.
+Los errores de validación y de negocio tienen esta forma:
 
-La emisión presupone que Orders ya obtuvo una reserva confirmada de Events, de acuerdo con el contrato del equipo. Tickets no reserva aforo ni llama directamente a Events.
+```json
+{
+  "codigo": "CONFLICTO_TICKET",
+  "mensaje": "La orden ya tiene tickets asociados con datos distintos a la solicitud"
+}
+```
+
+La respuesta de código ya utilizado mantiene el formato específico definido en el contrato, con `codigo`, `estado`, `valido` y `mensaje`.
+
+| Estado | Uso habitual |
+|---|---|
+| `400 Bad Request` | Campos obligatorios ausentes o valores no positivos en la emisión. |
+| `401 Unauthorized` | Falta el JWT o su firma, emisor o vigencia no son válidos. |
+| `403 Forbidden` | El rol no permite la operación o el `usuarioId` no coincide con el JWT. |
+| `404 Not Found` | No existe el código solicitado para validar. |
+| `409 Conflict` | Datos diferentes para una orden ya emitida o ticket ya utilizado. |
+
+## Flujos de Tickets
+
+### Emisión y consulta
+
+```mermaid
+sequenceDiagram
+    actor Comprador
+    participant Users
+    participant Orders
+    participant Events
+    participant Tickets
+    participant DB as PostgreSQL de Tickets
+    Comprador->>Users: Inicia sesión
+    Users-->>Comprador: JWT con sub y rol COMPRADOR
+    Comprador->>Orders: Solicita compra con su JWT
+    Orders->>Events: Solicita reservar aforo para la orden
+    Events-->>Orders: Reserva confirmada
+    Orders->>Tickets: POST /interno/tickets + JWT del comprador
+    Tickets->>Tickets: Valida JWT y usuarioId
+    Tickets->>DB: Guarda un ticket por unidad
+    DB-->>Tickets: Tickets persistidos
+    Tickets-->>Orders: 201 + ordenId y códigos
+    Orders-->>Comprador: Orden emitida y tickets
+    Comprador->>Tickets: GET /tickets/mis-tickets + JWT
+    Tickets->>DB: Busca tickets del sub autenticado
+    DB-->>Tickets: Tickets propios
+    Tickets-->>Comprador: 200 + lista de tickets
+```
+
+Orders coordina la compra de forma síncrona: primero obtiene la reserva de Events y luego solicita la emisión. Tickets no consulta directamente Events ni Orders; confía en que Orders respeta ese orden del contrato.
+
+### Validación de acceso
+
+```mermaid
+sequenceDiagram
+    actor Staff as STAFF de puerta
+    participant Tickets
+    participant DB as PostgreSQL de Tickets
+    Staff->>Tickets: POST /tickets/{codigo}/validaciones + JWT
+    Tickets->>Tickets: Valida firma, emisor, expiración y rol STAFF
+    Tickets->>DB: Bloquea y consulta el ticket
+    alt Ticket en estado EMITIDO
+        Tickets->>DB: Cambia estado a UTILIZADO
+        DB-->>Tickets: Cambio persistido
+        Tickets-->>Staff: 200 + valido true
+    else Ticket ya utilizado
+        Tickets-->>Staff: 409 + valido false
+    end
+```
+
+### Propiedad de datos
+
+| Servicio | Datos que administra relacionados con este flujo |
+|---|---|
+| Users | Usuarios, credenciales, roles y emisión del JWT. |
+| Events | Eventos, aforo y reservas. |
+| Orders | Orden, comprador, evento, cantidad y coordinación de la compra. |
+| Tickets | Código, orden asociada, comprador, evento y estado del ticket. |
+
+Cada servicio accede a su propia base de datos. Tickets persiste `usuarioId`, `eventoId` y `ordenId` como identificadores, no como relaciones JPA remotas.
+
+## Ejecutar en entorno local
+
+### Requisitos
+
+- JDK 21.
+- PostgreSQL local.
+- Microservicio Users para obtener los JWT de comprador y STAFF.
+- Maven Wrapper incluido en el repositorio; no es necesario instalar Maven por separado.
+
+### 1. Crear la base de datos
+
+En PostgreSQL crea una base llamada `eventpass_tickets`:
+
+```sql
+CREATE DATABASE eventpass_tickets;
+```
+
+### 2. Configurar variables locales
+
+Desde la raíz del repositorio, copia `.env.example` a `.env` y completa los valores locales:
+
+```cmd
+copy .env.example .env
+```
+
+Variables reconocidas:
+
+| Variable | Uso | Predeterminado |
+|---|---|---|
+| `DB_URL` | URL JDBC de PostgreSQL. | `jdbc:postgresql://localhost:5432/eventpass_tickets` |
+| `DB_USERNAME` | Usuario de PostgreSQL. | `postgres` |
+| `DB_PASSWORD` | Contraseña local de PostgreSQL. | Vacía |
+| `SERVER_PORT` | Puerto HTTP. | `8081` |
+| `JWT_SECRET_BASE64` | Clave Base64 para validar la firma; obligatoria y compartida con Users. | Sin valor |
+| `JWT_ISSUER` | Emisor requerido en el JWT. | `eventpass-users` |
+
+`JWT_SECRET_BASE64` debe tener exactamente el mismo valor que en Users. No copies una clave de ejemplo si Users está usando otra. `.env` está excluido de Git; no lo compartas ni lo subas. Hibernate usa `ddl-auto=update` para crear o actualizar las tablas locales durante el desarrollo.
+
+### 3. Iniciar la aplicación
+
+En Windows, desde la raíz del repositorio:
+
+```cmd
+mvnw.cmd spring-boot:run
+```
+
+La API queda disponible en `http://localhost:8081` (o en el puerto configurado en `SERVER_PORT`).
+
+### 4. Probar con Postman
+
+1. Inicia Users y Tickets.
+2. Inicia sesión en Users con una cuenta `COMPRADOR` mediante `POST http://localhost:8080/auth/login` y conserva el `token` y `usuario.id` de la respuesta.
+3. Envía `POST http://localhost:8081/interno/tickets` con ese JWT como Bearer y con `usuarioId` igual a `usuario.id`. Usa un `ordenId` nuevo y una cantidad positiva.
+4. Repite la solicitud con los mismos valores; espera `200` y los mismos tickets. Cambia la cantidad para esa orden y espera `409`.
+5. Consulta `GET http://localhost:8081/tickets/mis-tickets?usuarioId={usuario.id}`. Prueba otro ID y confirma `403`.
+6. Inicia sesión con una cuenta `STAFF` y valida un código mediante `POST http://localhost:8081/tickets/{codigo}/validaciones`. Repite la llamada y confirma `409`.
+7. Prueba una ruta protegida sin token (`401`) y una operación con rol incorrecto (`403`).
+
+## Alcance y decisiones
+
+- Tickets emite solo después de que Orders obtuvo confirmación de reserva de Events.
+- Para mantener la integración acordada sin una credencial adicional de servicio, Orders reenvía el JWT de `COMPRADOR`. Tickets valida el usuario y su rol, pero el token no demuestra que la llamada provenga exclusivamente de Orders; un comprador con JWT válido puede invocar la ruta interna directamente.
+- Los reintentos posteriores a una emisión completada son idempotentes. Dos solicitudes simultáneas para una misma orden todavía pueden competir antes de persistir; el esquema evita duplicar la numeración del ticket, pero este caso concurrente requerirá tratamiento adicional.
+- No hay flujo de reembolso o cancelación en el contrato actual. Tickets no libera aforo y no borra tickets; esa coordinación correspondería a Orders y Events si el alcance cambiara.
+- La comunicación local es REST/JSON síncrona. AWS queda fuera de esta versión.
+
+## Información del proyecto
+
+- Puerto local coordinado: Users `8080`, Tickets `8081`, Orders `8082`.
+- El contrato entre servicios se documenta en `Contrato_Comunicacion_EventPass.md`, mantenido por el equipo fuera de este repositorio.
+- Los cambios funcionales se integran primero en `develop`; `main` se reserva para versiones y releases.
