@@ -3,6 +3,7 @@ package dev.eventpass.tickets.exception;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -16,6 +17,12 @@ public class GlobalExceptionHandler {
             .map(error -> "El campo " + error.getField() + " " + error.getDefaultMessage())
             .orElse("La solicitud contiene datos inválidos");
         return ResponseEntity.badRequest().body(new ApiError("SOLICITUD_INVALIDA", mensaje));
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiError> manejarParametroInvalido(HandlerMethodValidationException exception) {
+        return ResponseEntity.badRequest()
+            .body(new ApiError("SOLICITUD_INVALIDA", "El parámetro usuarioId debe ser un número positivo"));
     }
 
     @ExceptionHandler(UsuarioNoCoincideException.class)

@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import dev.eventpass.tickets.dto.request.EmitirTicketsRequest;
 import dev.eventpass.tickets.dto.response.EmitirTicketsResponse;
+import dev.eventpass.tickets.dto.response.TicketResponse;
 import dev.eventpass.tickets.dto.response.TicketEmitidoResponse;
 import dev.eventpass.tickets.exception.ConflictoTicketException;
 import dev.eventpass.tickets.exception.UsuarioNoCoincideException;
@@ -59,6 +60,23 @@ public class TicketService {
 
         List<Ticket> guardados = ticketRepository.saveAllAndFlush(nuevos);
         return new ResultadoEmision(crearRespuesta(request.ordenId(), guardados), true);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TicketResponse> listarMisTickets(Long usuarioIdSolicitado, UsuarioAutenticado usuario) {
+        if (!Objects.equals(usuarioIdSolicitado, usuario.id())) {
+            throw new UsuarioNoCoincideException();
+        }
+
+        return ticketRepository.findAllByUsuarioIdOrderByTicketIdDesc(usuario.id()).stream()
+            .map(ticket -> new TicketResponse(
+                ticket.getTicketId(),
+                ticket.getCodigo(),
+                ticket.getOrdenId(),
+                ticket.getEventoId(),
+                ticket.getEstado()
+            ))
+            .toList();
     }
 
     private boolean coincidenConSolicitud(List<Ticket> existentes, EmitirTicketsRequest request) {
