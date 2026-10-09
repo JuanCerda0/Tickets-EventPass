@@ -12,6 +12,14 @@ target/
 .settings
 .springBeans
 .sts4-cache
+.metadata/
+.recommenders/
+bin/
+*.class
+
+### JDT Language Server (JDTLS) ###
+.jdtls/
+.jdtls-workspace/
 
 ### IntelliJ IDEA ###
 .idea
@@ -31,3 +39,12 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local environment secrets ###
+.env
+.env.*
+!.env.example
+
+### OS generated files ###
+.DS_Store
+Thumbs.db
