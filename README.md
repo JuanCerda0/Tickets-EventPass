@@ -207,45 +207,55 @@ Cada servicio accede a su propia base de datos. Tickets persiste `usuarioId`, `e
 ### Requisitos
 
 - JDK 21.
-- PostgreSQL local.
+- Docker Desktop con Docker Compose para levantar PostgreSQL local, o una instancia PostgreSQL compatible.
 - Microservicio Users para obtener los JWT de comprador y STAFF.
 - Maven Wrapper incluido en el repositorio; no es necesario instalar Maven por separado.
 
-### 1. Crear la base de datos
+### 1. Configurar variables locales
 
-En PostgreSQL crea una base llamada `eventpass_tickets`:
+Desde la raíz del repositorio, crea `.env` a partir del ejemplo solo si todavía no existe:
 
-```sql
-CREATE DATABASE eventpass_tickets;
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-### 2. Configurar variables locales
-
-Desde la raíz del repositorio, copia `.env.example` a `.env` y completa los valores locales:
-
-```cmd
-copy .env.example .env
-```
+Si ya tienes un `.env`, consérvalo y actualiza ahí `DB_URL`, `DB_PASSWORD` y `DB_HOST_PORT`; no lo sobrescribas. El `JWT_SECRET_BASE64` debe seguir coincidiendo con Users.
 
 Variables reconocidas:
 
 | Variable | Uso | Predeterminado |
 |---|---|---|
-| `DB_URL` | URL JDBC de PostgreSQL. | `jdbc:postgresql://localhost:5432/eventpass_tickets` |
+| `DB_URL` | URL JDBC de PostgreSQL. | `jdbc:postgresql://localhost:5434/eventpass_tickets` |
 | `DB_USERNAME` | Usuario de PostgreSQL. | `postgres` |
-| `DB_PASSWORD` | Contraseña local de PostgreSQL. | Vacía |
+| `DB_PASSWORD` | Contraseña local de PostgreSQL. | `tickets_local_dev` en el ejemplo |
+| `DB_HOST_PORT` | Puerto publicado en el host para PostgreSQL. | `5434` |
 | `SERVER_PORT` | Puerto HTTP. | `8081` |
 | `JWT_SECRET_BASE64` | Clave Base64 para validar la firma; obligatoria y compartida con Users. | Sin valor |
 | `JWT_ISSUER` | Emisor requerido en el JWT. | `eventpass-users` |
 
-`JWT_SECRET_BASE64` debe tener exactamente el mismo valor que en Users. No copies una clave de ejemplo si Users está usando otra. `.env` está excluido de Git; no lo compartas ni lo subas. Hibernate usa `ddl-auto=update` para crear o actualizar las tablas locales durante el desarrollo.
+`JWT_SECRET_BASE64` debe tener exactamente el mismo valor que en Users. No copies una clave de ejemplo si Users está usando otra. `.env` está excluido de Git; no lo compartas ni lo subas. Los valores de contraseña incluidos son solo para desarrollo local; puedes cambiarlos, pero usa el mismo `DB_PASSWORD` en la aplicación y en Compose. Hibernate usa `ddl-auto=update` para crear o actualizar las tablas locales durante el desarrollo.
+
+### 2. Levantar PostgreSQL con Docker Compose
+
+El Compose crea únicamente la base `eventpass_tickets` y la publica en `127.0.0.1:5434`. El volumen `eventpass-tickets-postgres-data` conserva los datos al detener el contenedor.
+
+```powershell
+docker compose -f compose.postgres.yaml up -d
+docker compose -f compose.postgres.yaml ps
+```
+
+Este archivo levanta la base de datos, no la aplicación Tickets. Para detener PostgreSQL sin borrar su volumen:
+
+```powershell
+docker compose -f compose.postgres.yaml down
+```
 
 ### 3. Iniciar la aplicación
 
 En Windows, desde la raíz del repositorio:
 
-```cmd
-mvnw.cmd spring-boot:run
+```powershell
+.\mvnw.cmd spring-boot:run
 ```
 
 La API queda disponible en `http://localhost:8081` (o en el puerto configurado en `SERVER_PORT`).
@@ -270,6 +280,6 @@ La API queda disponible en `http://localhost:8081` (o en el puerto configurado e
 
 ## Información del proyecto
 
-- Puerto local coordinado: Users `8080`, Tickets `8081`, Orders `8082`.
+- Puerto local coordinado: Users `8080`, Tickets `8081`, Orders `8083`.
 - El contrato entre servicios se documenta en `Contrato_Comunicacion_EventPass.md`, mantenido por el equipo fuera de este repositorio.
 - Los cambios funcionales se integran primero en `develop`; `main` se reserva para versiones y releases.
