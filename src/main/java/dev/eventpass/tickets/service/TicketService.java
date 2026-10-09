@@ -11,7 +11,10 @@ import dev.eventpass.tickets.dto.request.EmitirTicketsRequest;
 import dev.eventpass.tickets.dto.response.EmitirTicketsResponse;
 import dev.eventpass.tickets.dto.response.TicketResponse;
 import dev.eventpass.tickets.dto.response.TicketEmitidoResponse;
+import dev.eventpass.tickets.dto.response.ValidarTicketResponse;
 import dev.eventpass.tickets.exception.ConflictoTicketException;
+import dev.eventpass.tickets.exception.TicketNoEncontradoException;
+import dev.eventpass.tickets.exception.TicketYaUtilizadoException;
 import dev.eventpass.tickets.exception.UsuarioNoCoincideException;
 import dev.eventpass.tickets.model.EstadoTicket;
 import dev.eventpass.tickets.model.Ticket;
@@ -77,6 +80,19 @@ public class TicketService {
                 ticket.getEstado()
             ))
             .toList();
+    }
+
+    @Transactional
+    public ValidarTicketResponse validar(String codigo) {
+        Ticket ticket = ticketRepository.buscarPorCodigoParaValidar(codigo)
+            .orElseThrow(() -> new TicketNoEncontradoException(codigo));
+
+        if (ticket.getEstado() == EstadoTicket.UTILIZADO) {
+            throw new TicketYaUtilizadoException(codigo);
+        }
+
+        ticket.marcarUtilizado();
+        return new ValidarTicketResponse(ticket.getCodigo(), ticket.getEstado(), true);
     }
 
     private boolean coincidenConSolicitud(List<Ticket> existentes, EmitirTicketsRequest request) {

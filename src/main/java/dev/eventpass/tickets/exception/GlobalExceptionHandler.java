@@ -7,6 +7,9 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import dev.eventpass.tickets.dto.response.TicketYaUtilizadoResponse;
+import dev.eventpass.tickets.model.EstadoTicket;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -35,5 +38,23 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> manejarConflicto(ConflictoTicketException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
             .body(new ApiError("CONFLICTO_TICKET", exception.getMessage()));
+    }
+
+    @ExceptionHandler(TicketNoEncontradoException.class)
+    public ResponseEntity<ApiError> manejarTicketNoEncontrado(TicketNoEncontradoException exception) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(new ApiError("TICKET_NO_ENCONTRADO", exception.getMessage()));
+    }
+
+    @ExceptionHandler(TicketYaUtilizadoException.class)
+    public ResponseEntity<TicketYaUtilizadoResponse> manejarTicketYaUtilizado(
+        TicketYaUtilizadoException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new TicketYaUtilizadoResponse(
+            exception.getCodigo(),
+            EstadoTicket.UTILIZADO,
+            false,
+            exception.getMessage()
+        ));
     }
 }
